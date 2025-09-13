@@ -28,4 +28,4 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Run the `test_network.py` script, optionally adding different parameters.
+To train the model, run the `test_network.py` script, optionally adding different parameters.
