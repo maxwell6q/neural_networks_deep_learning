@@ -25,12 +25,17 @@ class Network(object):
         biases - list containing the bias vectors for each layer
         weigts - list containing the weight matrices for each layer
                  size(weights[i]) = (sizes[i], sizes[i-1])
+                 both biases and weights are lists of np.arrays
         '''
         self.num_layers = len(sizes)
         self.sizes = sizes
         self.biases = [np.random.randn(nex, 1) for nex in sizes[1:]]
         self.weights = [np.random.randn(nex, prev) 
-                        for nex, prev in zip(sizes[1:],sizes[:-1])]
+                        for nex, prev in zip(sizes[1:], sizes[:-1])]
+        self.score = 0
+        self.best_biases = [np.zeros((nex, 1)) for nex in sizes[1:]]
+        self.best_weights = [np.zeros((nex, prev))
+                             for nex, prev in zip(sizes[1:], sizes[:-1])]
         
     
     def feedforward(self, a):
@@ -53,6 +58,7 @@ class Network(object):
         '''
         if test_data:
             n_test = len(test_data)
+            best_classified = 0
 
         n = len(training_data)
         for epoch in range(epochs):
@@ -64,11 +70,15 @@ class Network(object):
                 self.update_mini_batch(mini_batch, eta)
         
             if test_data:
-                print("Epoch {0}: {1} / {2}".format(
-                    epoch, self.evaluate(test_data), n_test))
+                correct = self.evaluate(test_data)
+                print("Epoch {0}: {1} / {2}".format(epoch+1, correct, n_test))
+                if correct > best_classified:
+                    best_classified = correct
+                    self.score = best_classified/n_test
+                    self.best_biases = self.biases
+                    self.best_weights = self.weights
             else:
-                print("Epoch {0} complete".format(epoch))
-        
+                print("Epoch {0} complete".format(epoch+1))
         
 
     def update_mini_batch(self, mini_batch, eta):
@@ -133,14 +143,32 @@ class Network(object):
     
 
     def evaluate(self, test_data):
-        ''' 
-        Returns the number of correctly classified test datums'''
+        '''Returns the number of correctly classified test datums'''
         predictions = [(np.argmax(self.feedforward(x)), np.argmax(y)) for (x, y) in test_data]
         correct = sum(int(aL == y) for (aL, y) in predictions)
         return correct
     
-    
 
+    def save_model(self, filename="mnist_model.npz"):
+        '''Saves biases and weights to a compressed .npz file.'''
+        np.savez_compressed(filename,
+            **{f"b{i}": b for i, b in enumerate(self.best_biases)},
+            **{f"W{i}": w for i, w in enumerate(self.best_weights)})
+        print(f"Model saved to {filename}")
+
+
+    def load_model(self, filename="mnist_model.npz"):
+        '''
+        Loads the biases and weights from a .npz file.
+        Returns the biases and weights as lists of numpy arrays.
+        '''
+        data = np.load(filename)
+        self.weights = [data[f"W{i}"] for i in range(int(len(data.keys())/2))]
+        self.biases = [data[f"b{i}"] for i in range(int(len(data.keys())/2))]
+        data.close()
+        print(f"Model loaded from {filename}")
+
+    
 
 def sigmoid(z):
     '''Sigmoid function with input "z"'''
