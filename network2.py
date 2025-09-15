@@ -1,10 +1,11 @@
 '''
-network.py
-~~~~~~~~~~
+network2.py
+~~~~~~~~~~~
 
-A module to implement the stochastic gradient descent learning
-algorithm for a feedforward neural network.  Gradients are calculated
-using backpropagation.
+A module to implement the stochastic gradient descent learning algorithm for a
+feedforward neural network. Gradients are calculated using backpropagation. 
+This script also includes several improvements to the vanilla version, such as 
+a different cost functions, regularization and initialization.
 '''
 
 #### Libraries
@@ -15,10 +16,59 @@ import random
 import numpy as np
 
 
+class CrossEntropyCost(object):
+
+    @staticmethod
+    def fn(a, y):
+        '''
+        Returns the cross entropy cost for one input dataum. 
+        "a" is the network output, "y" is the desired output.
+        '''
+        return np.sum(np.nan_to_num(np.multiply(y, np.log(a)) + 
+                                    np.multiply((1-y), np.log(1-a))))
+    
+    @staticmethod
+    def delta(z, a, y):
+        '''
+        Returns the error delta for the output layer. 
+        "z" is not used, and only included to provide consistent interfacing.
+        '''
+        return (a-y)
+    
+
+class QuadraticCost(object):
+
+    @staticmethod
+    def fn(a, y):
+        '''
+        Returns the quadratic cost for one input datum.
+        "a" is the network output, "y" is the desired output.
+        '''
+        return 0.5*np.linalg.norm(a-y)**2
+    
+    @staticmethod
+    def delta(z, a, y):
+        '''Returns the error delta for the output layer.'''
+        return np.multiply((a-y), sigmoid_prime(z))
+
+
+
+def l2_weight_decay(w, lmbda, eta, n):
+    return w*(1 - (lmbda*eta)/n)
+
+
+def l1_weight_decay(w, lmbda, eta, n):
+    return w - lmbda*eta/n * np.sign(w)
+
+
+def no_weight_decay(w, lmbda, eta, n):
+    return w
+
+
 
 class Network(object):
 
-    def __init__(self, sizes):
+    def __init__(self, sizes, cost=CrossEntropyCost, regularization=l2_weight_decay):
         '''
         num_layers - number of layers, including input and output
         sizes  - list containing the number of neurons per layer
@@ -29,13 +79,35 @@ class Network(object):
         '''
         self.num_layers = len(sizes)
         self.sizes = sizes
-        self.biases = [np.random.randn(nex, 1) for nex in sizes[1:]]
-        self.weights = [np.random.randn(nex, prev) 
-                        for nex, prev in zip(sizes[1:], sizes[:-1])]
+        self.cost = cost
+        self.defaultWeightInitializer()
+        self._weight_decay = regularization
+        
         self.score = 0
         self.best_biases = [np.zeros((nex, 1)) for nex in sizes[1:]]
         self.best_weights = [np.zeros((nex, prev))
                              for nex, prev in zip(sizes[1:], sizes[:-1])]
+
+
+    def defaultWeightInitializer(self):
+        '''
+        Initializes the biases with unit variance and the 
+        weights with small variance to prevent saturation.
+        '''
+        self.biases = [np.random.randn(nex, 1) for nex in self.sizes[1:]]
+        self.weights = [np.random.randn(nex, prev)/np.sqrt(prev)
+                        for nex, prev in zip(self.sizes[1:], self.sizes[:-1])]
+        
+
+    def largeWeigtInitializer(self):
+        '''Initializes the biases and weights with unit variance.'''
+        self.biases = [np.random.randn(nex, 1) for nex in self.sizes[1:]]
+        self.weights = [np.random.randn(nex, prev)
+                        for nex, prev in zip(self.sizes[1:], self.sizes[:-1])]
+
+
+    def weight_decay(self, w, lmbda, eta, n):
+        return self._weight_decay(w, lmbda, eta, n)            
         
     
     def feedforward(self, a):
@@ -45,7 +117,7 @@ class Network(object):
         return a
 
 
-    def SGD(self, training_data, epochs, mini_batch_size, eta, test_data = None):
+    def SGD(self, training_data, epochs, mini_batch_size, eta, lmbda, test_data = None):
         '''
         Trains the network using stochastic gradient descent using minibatches
         by employing the backpropagation algorithm. 
@@ -67,7 +139,7 @@ class Network(object):
                             for k in range(0,n,mini_batch_size)]
             
             for mini_batch in mini_batches:
-                self.update_mini_batch(mini_batch, eta)
+                self.update_mini_batch(mini_batch, eta, lmbda, n)
         
             if test_data:
                 correct = self.evaluate(test_data)
@@ -81,7 +153,7 @@ class Network(object):
                 print("Epoch {0} complete".format(epoch+1))
         
 
-    def update_mini_batch(self, mini_batch, eta):
+    def update_mini_batch(self, mini_batch, eta, lmbda, n):
         grad_b = [np.zeros(b.shape) for b in self.biases]
         grad_w = [np.zeros(w.shape) for w in self.weights]
 
@@ -95,7 +167,8 @@ class Network(object):
 
         # update b,w: (b/w)' = (b/w) - eta *1/m *grad C (wrt. b/w)
         self.biases = [b - eta/len(mini_batch)*gb for b, gb in zip(self.biases, grad_b)]
-        self.weights = [w - eta/len(mini_batch)*gw for w, gw in zip(self.weights, grad_w)]
+        self.weights = [self.weight_decay(w, lmbda, eta, n) 
+                        - eta/len(mini_batch)*gw for w, gw in zip(self.weights, grad_w)]
     
 
     def backprop(self, x, y):
@@ -120,7 +193,7 @@ class Network(object):
             activations.append(activation)
 
         # errors on last layer and from that the partial derivatives
-        delta = np.multiply(self.cost_derivative(activations[-1], y), sigmoid_prime(zs[-1]))
+        delta = (self.cost).delta(zs[-1], activations[-1], y)
         grad_b[-1] = delta
         grad_w[-1] = delta @ np.transpose(activations[-2])
 
@@ -132,15 +205,7 @@ class Network(object):
             grad_w[-l] = delta @ np.transpose(activations[-l-1])
 
         return (grad_b, grad_w)
-    
-
-    def cost_derivative(self, output_activations, y):
-        '''
-        Computes the vector of partial derivatives del C_x /del a 
-        where "a" is the vecotor of output activations
-        '''
-        return (output_activations-y) 
-    
+        
 
     def evaluate(self, test_data):
         '''Returns the number of correctly classified test datums'''
@@ -149,7 +214,7 @@ class Network(object):
         return correct
     
 
-    def save_model(self, filename="models/mnist_model.npz"):
+    def save_model(self, filename="models/mnist_model2.npz"):
         '''Saves biases and weights to a compressed .npz file.'''
         np.savez_compressed(filename,
             **{f"b{i}": b for i, b in enumerate(self.best_biases)},
@@ -157,7 +222,7 @@ class Network(object):
         print(f"Model saved to {filename}")
 
 
-    def load_model(self, filename="models/mnist_model.npz"):
+    def load_model(self, filename="models/mnist_model2.npz"):
         '''
         Loads the biases and weights from a .npz file.
         Returns the biases and weights as lists of numpy arrays.
@@ -173,6 +238,7 @@ class Network(object):
 def sigmoid(z):
     '''Sigmoid function with input "z"'''
     return 1.0/(1.0+np.exp(-z))
+
 
 def sigmoid_prime(z):
     '''Derivative of the sigmoid function.'''
