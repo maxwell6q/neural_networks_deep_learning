@@ -82,6 +82,10 @@ class Network(object):
         self.cost = cost
         self.defaultWeightInitializer()
         self._weight_decay = regularization
+
+        self.biases_velo = [np.zeros((nex, 1)) for nex in sizes[1:]]
+        self.weight_velo = [np.zeros((nex, prev))
+                             for nex, prev in zip(sizes[1:], sizes[:-1])]
         
         self.score = 0
         self.best_biases = [np.zeros((nex, 1)) for nex in sizes[1:]]
@@ -117,7 +121,7 @@ class Network(object):
         return a
 
 
-    def SGD(self, training_data, epochs, mini_batch_size, eta, lmbda, test_data = None):
+    def SGD(self, training_data, epochs, mini_batch_size, eta, lmbda, mu, test_data = None):
         '''
         Trains the network using stochastic gradient descent using minibatches
         by employing the backpropagation algorithm. 
@@ -139,7 +143,7 @@ class Network(object):
                             for k in range(0,n,mini_batch_size)]
             
             for mini_batch in mini_batches:
-                self.update_mini_batch(mini_batch, eta, lmbda, n)
+                self.update_mini_batch(mini_batch, eta, lmbda, n, mu)
         
             if test_data:
                 correct = self.evaluate(test_data)
@@ -153,7 +157,7 @@ class Network(object):
                 print("Epoch {0} complete".format(epoch+1))
         
 
-    def update_mini_batch(self, mini_batch, eta, lmbda, n):
+    def update_mini_batch(self, mini_batch, eta, lmbda, n, mu):
         grad_b = [np.zeros(b.shape) for b in self.biases]
         grad_w = [np.zeros(w.shape) for w in self.weights]
 
@@ -166,9 +170,19 @@ class Network(object):
             grad_w = [gw + dgw for gw, dgw in zip(grad_w, delta_grad_w)]
 
         # update b,w: (b/w)' = (b/w) - eta *1/m *grad C (wrt. b/w)
-        self.biases = [b - eta/len(mini_batch)*gb for b, gb in zip(self.biases, grad_b)]
-        self.weights = [self.weight_decay(w, lmbda, eta, n) 
-                        - eta/len(mini_batch)*gw for w, gw in zip(self.weights, grad_w)]
+
+        # std SGD update
+        #self.biases = [b - eta/len(mini_batch)*gb for b, gb in zip(self.biases, grad_b)]
+        #self.weights = [self.weight_decay(w, lmbda, eta, n) 
+        #                - eta/len(mini_batch)*gw for w, gw in zip(self.weights, grad_w)]
+
+        # momentum based gradient (=std SGD if mu=0.0)
+        self.biases_velo = [mu*v - eta/len(mini_batch)*gb for v,gb in zip(self.biases_velo, grad_b)]
+        self.weight_velo = [mu*v - eta/len(mini_batch)*gw for v,gw in zip(self.weight_velo, grad_w)]
+
+        self.biases = [b + v for b, v in zip(self.biases, self.biases_velo)]
+        self.weights = [self.weight_decay(w, lmbda, eta, n) + v 
+                        for w, v in zip(self.weights, self.weight_velo)]
     
 
     def backprop(self, x, y):
@@ -217,19 +231,19 @@ class Network(object):
     def save_model(self, filename="models/mnist_model2.npz"):
         '''Saves biases and weights to a compressed .npz file.'''
         np.savez_compressed(filename,
+            **{"sizes": self.sizes},
             **{f"b{i}": b for i, b in enumerate(self.best_biases)},
-            **{f"W{i}": w for i, w in enumerate(self.best_weights)})
+            **{f"w{i}": w for i, w in enumerate(self.best_weights)})
         print(f"Model saved to {filename}")
 
 
     def load_model(self, filename="models/mnist_model2.npz"):
-        '''
-        Loads the biases and weights from a .npz file.
-        Returns the biases and weights as lists of numpy arrays.
-        '''
+        '''Loads the layers and best biases and weights from a .npz file.'''
         data = np.load(filename)
-        self.weights = [data[f"W{i}"] for i in range(int(len(data.keys())/2))]
-        self.biases = [data[f"b{i}"] for i in range(int(len(data.keys())/2))]
+        self.sizes = data["sizes"]
+        self.num_layers = len(self.sizes)
+        self.biases = [data[f"b{i}"] for i in range(int((len(data.keys())-1)/2))]
+        self.weights = [data[f"w{i}"] for i in range(int((len(data.keys())-1)/2))]
         data.close()
         print(f"Model loaded from {filename}")
 
