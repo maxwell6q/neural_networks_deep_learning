@@ -5,8 +5,9 @@ The goal of this project is **educational**: to understand the inner workings of
 
 ## Current Contents
 - `mnist_loader.py` contains functions to load the MNIST dataset
-- `network.py` implements the actual network by the "Network" class
-- `test_network.py` loads the dataset and trains the network
+- `network.py` implements a vanilla mlp by the "Network" class, and training options using SGD and backpropagation
+- `network2.py` implements an improved version of the mlp with different cost functions and regularization mechanisms
+- `test_network.py` loads the dataset, creates a "Network" instance from "network2.py" and trains it
 
 
 ## Installation and Usage
@@ -28,4 +29,8 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-To train the model, run the `test_network.py` script, optionally adding different parameters.
+To train the model, run the `test_network.py` script, optionally adding different parameters. Optionally, a pretrained version can be loaded by executing the following commands in a python3 shell:
+```bash
+import network2
+net = network2.Network.load_model()
+```
