@@ -70,7 +70,8 @@ def no_weight_decay(w, lmbda, eta, n):
 class Network(object):
 
     def __init__(self, sizes=[784, 30, 10], cost=CrossEntropyCost, regularization=l2_weight_decay,
-                 epochs=30, mini_batch_size=10, eta=0.5, lmbda=1.0, momentum=True, mu=0.1):
+                 epochs=30, mini_batch_size=10, eta=0.5, lmbda=4.0, momentum=True, mu=0.1,
+                 dropout_rate=0.1):
         '''
         Inputs:
         sizes  - list containing the number of neurons per layer
@@ -103,6 +104,7 @@ class Network(object):
         self.lmbda = lmbda
         self.momentum = momentum
         self.mu = mu
+        self.dropout_rate = dropout_rate
 
         # Keep score
         self.score = 0
@@ -153,13 +155,13 @@ class Network(object):
 
     def SGD(self, training_data, cost=None, regularization=None, epochs=None,
             mini_batch_size=None, eta=None, lmbda=None, momentum=None, mu=None, 
-            dropout=True, test_data=None):
+            dropout_rate=None, val_data=None):
         '''
         Trains the network using stochastic gradient descent using minibatches
         by employing the backpropagation algorithm. 
 
         training_data   - list of touples (x,y), representing inputs and desired outputs
-        test_data       - same format as training_data
+        val_data        - same format as training_data
         epochs          - number of times the training set is split into minibatches
         mini_batch_size - size of minibatches
         eta             - learning rate
@@ -179,13 +181,15 @@ class Network(object):
         lmbda = lmbda if lmbda is not None else self.lmbda
         momentum = momentum if momentum is not None else self.momentum
         mu = mu if mu is not None else self.mu
+        dropout_rate = dropout_rate if dropout_rate is not None else self.dropout_rate
 
-        self.epochs, self.mini_batch_size, self.eta, self.lmbda, self.mu, self.momentum = \
-        epochs, mini_batch_size, eta, lmbda, mu, momentum
+        self.epochs, self.mini_batch_size, self.eta, self.lmbda, self.mu, self.momentum,
+        self.dropout_rate = \
+        epochs, mini_batch_size, eta, lmbda, mu, momentum, dropout_rate
 
 
-        if test_data:
-            n_test = len(test_data)
+        if val_data:
+            n_test = len(val_data)
             best_classified = 0
 
         n = len(training_data)
@@ -195,10 +199,10 @@ class Network(object):
                             for k in range(0,n,mini_batch_size)]
             
             for mini_batch in mini_batches:
-                self.update_mini_batch(mini_batch, eta, lmbda, n, momentum, mu, dropout)
+                self.update_mini_batch(mini_batch, eta, lmbda, n, momentum, mu, dropout_rate)
         
-            if test_data:
-                correct = self.evaluate(test_data)
+            if val_data:
+                correct = self.evaluate(val_data)
                 print("Epoch {0}: {1} / {2}".format(epoch+1, correct, n_test))
                 if correct > best_classified:
                     best_classified = correct
@@ -209,19 +213,13 @@ class Network(object):
                 print("Epoch {0} complete".format(epoch+1))
         
 
-    def update_mini_batch(self, mini_batch, eta, lmbda, n, momentum, mu, dropout):
-        if dropout:
-            mask = []
-        else:
-            mask = []
-
-
+    def update_mini_batch(self, mini_batch, eta, lmbda, n, momentum, mu, dropout_rate):
         grad_b = [np.zeros(b.shape) for b in self.biases]
         grad_w = [np.zeros(w.shape) for w in self.weights]
 
         for x,y in mini_batch:
             # del C_Xj /del b  &  del C_Xj /del w
-            delta_grad_b, delta_grad_w = self.backprop(x,y, mask)
+            delta_grad_b, delta_grad_w = self.backprop(x, y, dropout_rate)
 
             # grad C = 1/m *Sum(grad C_Xj) -> apply to b,w separately, w/o 1/m
             grad_b = [gb + dgb for gb, dgb in zip(grad_b, delta_grad_b)]
@@ -237,7 +235,7 @@ class Network(object):
 
             self.biases = [b + v for b, v in zip(self.biases, self.aux_velo_b)]
             self.weights = [self.weight_decay(w, lmbda, eta, n) + v 
-                            for w, v, keep in zip(self.weights, self.aux_velo_w)]
+                            for w, v in zip(self.weights, self.aux_velo_w)]
     
         else:
             # std SGD update
@@ -246,12 +244,21 @@ class Network(object):
                             - eta/len(mini_batch)*gw for w, gw in zip(self.weights, grad_w)]
             
 
-    def backprop(self, x, y, mask):
+    def backprop(self, x, y, dropout_rate):
         '''
         Returns a touple (grad_b, grad_w), describing the gradient of the cost function
         C_x (wrt. one training image). grad_b and grad_w are lists of np-arrays of same
         shape as self.biases and self.weights. x and y describe one training datum.
         '''
+        if dropout_rate > 0:
+            mask = []
+            for b in self.biases[:-1]:
+                m = (np.random.rand(*np.shape(b)) > dropout_rate).astype(float) 
+                mask.append(m)
+            mask.append(list(np.ones(np.shape(self.biases[-1])).astype(float)))
+        else:
+            mask = [np.ones(np.shape(b)).astype(float) for b in self.biases]
+        
         grad_b = [np.zeros(b.shape) for b in self.biases]
         grad_w = [np.zeros(w.shape) for w in self.weights]
 
@@ -261,10 +268,10 @@ class Network(object):
 
         # feedforward process: run the network on x and save all weighted inputs (zs)
         # and activations
-        for b,w in zip(self.biases, self.weights):
+        for b, w, m in zip(self.biases, self.weights, mask):
             z = w @ activation + b
             zs.append(z)
-            activation = sigmoid(z)
+            activation = (sigmoid(z) * m) / (1-dropout_rate)
             activations.append(activation)
 
         # errors on last layer and from that the partial derivatives
@@ -276,6 +283,7 @@ class Network(object):
         for l in range(2, self.num_layers):
             z = zs[-l]
             delta = np.multiply(np.transpose(self.weights[-l+1]) @ delta, sigmoid_prime(z))
+            delta *= mask[-l]
             grad_b[-l] = delta
             grad_w[-l] = delta @ np.transpose(activations[-l-1])
 

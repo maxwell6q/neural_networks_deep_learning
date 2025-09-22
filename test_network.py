@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 '''
 test_network.py
 ~~~~~~~~~~~~~~~
@@ -18,9 +19,10 @@ parser.add_argument("-e", "--epochs", type=int, default=30,
 parser.add_argument("-mbs", "--batchSize", type=int, default=10, 
                     help="Number of training examples per mini-batch", metavar="")
 parser.add_argument("-eta", type=float, default=0.5, help="Learning rate", metavar="")
-parser.add_argument("-lmbda", type=float, default=5.0, help="Regularization factor", metavar="")
+parser.add_argument("-lmbda", type=float, default=4.0, help="Regularization factor", metavar="")
 parser.add_argument("-momentum", type=bool, default=True, help="Momentum Factor", metavar="")
 parser.add_argument("-mu", type=float, default=0.1, help="Momentum Factor", metavar="")
+parser.add_argument("-dropout", type=float, default=0.1, help="Dropout Rate", metavar="")
 
 ## Choosing Hyperparameters
 # eta - change by multiplying/dividing by 10, find first value, st cost initially decreases, half that
@@ -46,5 +48,6 @@ net = network2.Network(args.layers)
 # train the network using stochastic gradient descent (backpropagation)
 # (training_data, epochs, mini_batch_size, eta, test_data)
 #net.SGD(training_data, args.epochs, args.batchSize, args.eta, test_data)
-net.SGD(training_data, network2.CrossEntropyCost, network2.l2_weight_decay,
-        args.epochs, args.batchSize, args.eta, args.lmbda, args.momentum, args.mu, True, validation_data)
+net.SGD(training_data, cost=network2.CrossEntropyCost, regularization=network2.l2_weight_decay,
+        epochs=args.epochs, mini_batch_size=args.batchSize, eta=args.eta, lmbda=args.lmbda, 
+        momentum=args.momentum, mu=args.mu, dropout_rate=args.dropout, val_data=validation_data)
