@@ -13,7 +13,7 @@ the rest to 0.
 from sklearn.datasets import fetch_openml
 import numpy as np
 
-def load_data(train_split):
+def load_data(train_split, val_split):
     # load data
     mnist = fetch_openml('mnist_784', version=1, as_frame=False)
 
@@ -30,15 +30,16 @@ def load_data(train_split):
     # generate list of touples and split it
     n = np.shape(X)[0]
     all_data = [(x.reshape(-1, 1), y) for x, y in zip(X, Y)]
-    training_data = all_data[:round(n*train_split)]
-    test_data = all_data[round(n*train_split):]
+    training_data = all_data[:train_split]
+    validation_data = all_data[train_split:train_split+val_split]
+    test_data = all_data[train_split+val_split:]
 
-    return(training_data, test_data)
+    return(training_data, validation_data, test_data)
 
 
 
 def vectorize_results(j):
-    '''turn j into the j-th canonical vector'''
+    '''turns j into the j-th canonical vector.'''
     e = np.zeros((10,1))
     e[j] = 1
     return e

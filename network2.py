@@ -14,6 +14,7 @@ import random
 
 # Third-party libraries
 import numpy as np
+import pickle
 
 
 class CrossEntropyCost(object):
@@ -68,28 +69,50 @@ def no_weight_decay(w, lmbda, eta, n):
 
 class Network(object):
 
-    def __init__(self, sizes, cost=CrossEntropyCost, regularization=l2_weight_decay):
+    def __init__(self, sizes=[784, 30, 10], cost=CrossEntropyCost, regularization=l2_weight_decay,
+                 epochs=30, mini_batch_size=10, eta=0.5, lmbda=1.0, momentum=True, mu=0.1):
         '''
-        num_layers - number of layers, including input and output
+        Inputs:
         sizes  - list containing the number of neurons per layer
+        cost - a class object for the cost function
+        regularization - the weight decay function for regularization
+        epochs - max. number of training epochs
+        mini_batch_size - number of training examples per mini batch
+        eta - learning rate
+        lmbda - regularization parameter
+        momentum - weather or not momentum should be used in training
+        mu - momentum factor
+
+        -- format explanation
         biases - list containing the bias vectors for each layer
         weigts - list containing the weight matrices for each layer
                  size(weights[i]) = (sizes[i], sizes[i-1])
                  both biases and weights are lists of np.arrays
         '''
+        # Architecture
         self.num_layers = len(sizes)
         self.sizes = sizes
-        self.cost = cost
-        self.defaultWeightInitializer()
-        self._weight_decay = regularization
 
-        self.biases_velo = [np.zeros((nex, 1)) for nex in sizes[1:]]
-        self.weight_velo = [np.zeros((nex, prev))
-                             for nex, prev in zip(sizes[1:], sizes[:-1])]
-        
+        # Training Parameters
+        self.defaultWeightInitializer()
+        self.cost = cost
+        self._weight_decay = regularization
+        self.epochs = int(epochs)
+        self.mini_batch_size = int(mini_batch_size)
+        self.eta = eta
+        self.lmbda = lmbda
+        self.momentum = momentum
+        self.mu = mu
+
+        # Keep score
         self.score = 0
         self.best_biases = [np.zeros((nex, 1)) for nex in sizes[1:]]
         self.best_weights = [np.zeros((nex, prev))
+                             for nex, prev in zip(sizes[1:], sizes[:-1])]
+        
+        # Auxillary values
+        self.aux_velo_b = [np.zeros((nex, 1)) for nex in sizes[1:]]
+        self.aux_velo_w = [np.zeros((nex, prev))
                              for nex, prev in zip(sizes[1:], sizes[:-1])]
 
 
@@ -115,13 +138,22 @@ class Network(object):
         
     
     def feedforward(self, a):
-        '''Returns the network output when "a" is the input'''
+        '''Returns the current network output when "a" is the input (only used in training).'''
         for b,w in zip(self.biases, self.weights):
+            a = sigmoid(w @ a + b)
+        return a
+    
+
+    def predict(self, a):
+        '''Returns the final network output when "a" is the input.'''
+        for b,w in zip(self.best_biases, self.best_weights):
             a = sigmoid(w @ a + b)
         return a
 
 
-    def SGD(self, training_data, epochs, mini_batch_size, eta, lmbda, mu, test_data = None):
+    def SGD(self, training_data, cost=None, regularization=None, epochs=None,
+            mini_batch_size=None, eta=None, lmbda=None, momentum=None, mu=None, 
+            dropout=True, test_data=None):
         '''
         Trains the network using stochastic gradient descent using minibatches
         by employing the backpropagation algorithm. 
@@ -132,6 +164,26 @@ class Network(object):
         mini_batch_size - size of minibatches
         eta             - learning rate
         '''
+        # update, if parameters are provided.
+        # This is to allow saving training parameters and retraining
+        if cost:
+            self.cost = cost
+
+        if regularization:
+            self._weight_decay = regularization
+
+        epochs = int(epochs) if epochs is not None else self.epochs
+        mini_batch_size = int(mini_batch_size) if mini_batch_size is not None else \
+            self.mini_batch_size
+        eta = eta if eta is not None else self.eta
+        lmbda = lmbda if lmbda is not None else self.lmbda
+        momentum = momentum if momentum is not None else self.momentum
+        mu = mu if mu is not None else self.mu
+
+        self.epochs, self.mini_batch_size, self.eta, self.lmbda, self.mu, self.momentum = \
+        epochs, mini_batch_size, eta, lmbda, mu, momentum
+
+
         if test_data:
             n_test = len(test_data)
             best_classified = 0
@@ -143,7 +195,7 @@ class Network(object):
                             for k in range(0,n,mini_batch_size)]
             
             for mini_batch in mini_batches:
-                self.update_mini_batch(mini_batch, eta, lmbda, n, mu)
+                self.update_mini_batch(mini_batch, eta, lmbda, n, momentum, mu, dropout)
         
             if test_data:
                 correct = self.evaluate(test_data)
@@ -157,35 +209,44 @@ class Network(object):
                 print("Epoch {0} complete".format(epoch+1))
         
 
-    def update_mini_batch(self, mini_batch, eta, lmbda, n, mu):
+    def update_mini_batch(self, mini_batch, eta, lmbda, n, momentum, mu, dropout):
+        if dropout:
+            mask = []
+        else:
+            mask = []
+
+
         grad_b = [np.zeros(b.shape) for b in self.biases]
         grad_w = [np.zeros(w.shape) for w in self.weights]
 
         for x,y in mini_batch:
             # del C_Xj /del b  &  del C_Xj /del w
-            delta_grad_b, delta_grad_w = self.backprop(x,y)
+            delta_grad_b, delta_grad_w = self.backprop(x,y, mask)
 
             # grad C = 1/m *Sum(grad C_Xj) -> apply to b,w separately, w/o 1/m
             grad_b = [gb + dgb for gb, dgb in zip(grad_b, delta_grad_b)]
             grad_w = [gw + dgw for gw, dgw in zip(grad_w, delta_grad_w)]
 
         # update b,w: (b/w)' = (b/w) - eta *1/m *grad C (wrt. b/w)
+        if momentum:
+            # momentum based gradient (=std SGD if mu=0.0)
+            self.aux_velo_b = [mu*v - eta/len(mini_batch)*gb for v,gb in 
+                               zip(self.aux_velo_b, grad_b)]
+            self.aux_velo_w = [mu*v - eta/len(mini_batch)*gw for v,gw in 
+                               zip(self.aux_velo_w, grad_w)]
 
-        # std SGD update
-        #self.biases = [b - eta/len(mini_batch)*gb for b, gb in zip(self.biases, grad_b)]
-        #self.weights = [self.weight_decay(w, lmbda, eta, n) 
-        #                - eta/len(mini_batch)*gw for w, gw in zip(self.weights, grad_w)]
-
-        # momentum based gradient (=std SGD if mu=0.0)
-        self.biases_velo = [mu*v - eta/len(mini_batch)*gb for v,gb in zip(self.biases_velo, grad_b)]
-        self.weight_velo = [mu*v - eta/len(mini_batch)*gw for v,gw in zip(self.weight_velo, grad_w)]
-
-        self.biases = [b + v for b, v in zip(self.biases, self.biases_velo)]
-        self.weights = [self.weight_decay(w, lmbda, eta, n) + v 
-                        for w, v in zip(self.weights, self.weight_velo)]
+            self.biases = [b + v for b, v in zip(self.biases, self.aux_velo_b)]
+            self.weights = [self.weight_decay(w, lmbda, eta, n) + v 
+                            for w, v, keep in zip(self.weights, self.aux_velo_w)]
     
+        else:
+            # std SGD update
+            self.biases = [b - eta/len(mini_batch)*gb for b, gb in zip(self.biases, grad_b)]
+            self.weights = [self.weight_decay(w, lmbda, eta, n) 
+                            - eta/len(mini_batch)*gw for w, gw in zip(self.weights, grad_w)]
+            
 
-    def backprop(self, x, y):
+    def backprop(self, x, y, mask):
         '''
         Returns a touple (grad_b, grad_w), describing the gradient of the cost function
         C_x (wrt. one training image). grad_b and grad_w are lists of np-arrays of same
@@ -228,24 +289,34 @@ class Network(object):
         return correct
     
 
-    def save_model(self, filename="models/mnist_model2.npz"):
-        '''Saves biases and weights to a compressed .npz file.'''
-        np.savez_compressed(filename,
-            **{"sizes": self.sizes},
-            **{f"b{i}": b for i, b in enumerate(self.best_biases)},
-            **{f"w{i}": w for i, w in enumerate(self.best_weights)})
-        print(f"Model saved to {filename}")
+    def validate(self, validation_data):
+        '''Returns the validation accuracy for the best biases and weights.'''
+        predictions = [(np.argmax(self.predict(x)), np.argmax(y)) for (x, y) in validation_data]
+        correct = sum(int(aL == y) for (aL, y) in predictions)
+        accuracy = correct/len(validation_data)
+        print(f"Validation Accuracy: {accuracy*100} %")
+        #return accuracy
+        
+    
+
+    def save_model(self, filename="models/mnist_model2.pkl"):
+        '''Saves the model with training parameters.'''
+        data = {k: v for k, v in self.__dict__.items() 
+                if k not in ["aux_velo_b", "aux_velo_w", "biases", "weights"]}
+        with open(filename, "wb") as f:
+            pickle.dump(data, f)
+        print(f"Saved network to {filename}")
 
 
-    def load_model(self, filename="models/mnist_model2.npz"):
-        '''Loads the layers and best biases and weights from a .npz file.'''
-        data = np.load(filename)
-        self.sizes = data["sizes"]
-        self.num_layers = len(self.sizes)
-        self.biases = [data[f"b{i}"] for i in range(int((len(data.keys())-1)/2))]
-        self.weights = [data[f"w{i}"] for i in range(int((len(data.keys())-1)/2))]
-        data.close()
-        print(f"Model loaded from {filename}")
+    @classmethod
+    def load_model(cls, filename="models/mnist_model2.pkl"):
+        '''Reload a network from file, including hyperparameters.'''
+        with open(filename, "rb") as f:
+            data = pickle.load(f)
+        net = cls.__new__(cls)
+        net.__dict__.update(data)
+        print(f"Loaded network from {filename}")
+        return net
 
     
 

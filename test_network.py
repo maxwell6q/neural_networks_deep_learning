@@ -18,7 +18,9 @@ parser.add_argument("-e", "--epochs", type=int, default=30,
 parser.add_argument("-mbs", "--batchSize", type=int, default=10, 
                     help="Number of training examples per mini-batch", metavar="")
 parser.add_argument("-eta", type=float, default=0.5, help="Learning rate", metavar="")
-parser.add_argument("-lmbda", type=float, default=1.0, help="Regularization factor", metavar="")
+parser.add_argument("-lmbda", type=float, default=5.0, help="Regularization factor", metavar="")
+parser.add_argument("-momentum", type=bool, default=True, help="Momentum Factor", metavar="")
+parser.add_argument("-mu", type=float, default=0.1, help="Momentum Factor", metavar="")
 
 ## Choosing Hyperparameters
 # eta - change by multiplying/dividing by 10, find first value, st cost initially decreases, half that
@@ -35,7 +37,7 @@ parser.add_argument("-lmbda", type=float, default=1.0, help="Regularization fact
 args = parser.parse_args()
 
 # load the data, 60k training examples, 10k test examples
-training_data, test_data = mnist_loader.load_data(6/7)
+training_data, validation_data, test_data = mnist_loader.load_data(50000,10000)
 
 # initialize the network (input layer as size of mnist images, output as confidence)
 #net = network.Network(args.layers)
@@ -44,4 +46,5 @@ net = network2.Network(args.layers)
 # train the network using stochastic gradient descent (backpropagation)
 # (training_data, epochs, mini_batch_size, eta, test_data)
 #net.SGD(training_data, args.epochs, args.batchSize, args.eta, test_data)
-net.SGD(training_data, args.epochs, args.batchSize, args.eta, args.lmbda, 0.1, test_data)
+net.SGD(training_data, network2.CrossEntropyCost, network2.l2_weight_decay,
+        args.epochs, args.batchSize, args.eta, args.lmbda, args.momentum, args.mu, True, validation_data)
